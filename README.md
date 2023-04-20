@@ -5,13 +5,13 @@ Images Steganography using DWT algorithm
 
 ## Step by step
 
-- DWT transform
-- Blocking
-- Matching
-- Block difference computation
-- Block replacement
-- Re-arrange co-efficients blocks
-- Reverse DWT transform
+- [x] DWT transform
+- [x] Blocking
+- [x] Matching
+- [ ] Block differences computation
+- [ ] Block replacement
+- [ ] Re-arrange co-efficients blocks
+- [ ] Reverse DWT transform
 
 ### Disclaimer
 
