@@ -8,9 +8,9 @@ Images Steganography using DWT algorithm
 - [x] DWT transform
 - [x] Blocking
 - [x] Matching
-- [ ] Block differences computation
-- [ ] Block replacement
-- [ ] Re-arrange co-efficients blocks
+- [x] Block differences computation
+- [x] Block replacement
+- [ ] Rearrange coefficients blocks
 - [ ] Reverse DWT transform
 
 ### Disclaimer

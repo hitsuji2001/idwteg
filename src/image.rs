@@ -3,6 +3,7 @@ use std::{cmp::Ordering, fs, str};
 
 use crate::color::RGBColor;
 
+type Block<T> = [RGBColor<T>; 4];
 #[derive(Debug)]
 pub struct PPMImage {
     pub img_type: String,
@@ -59,6 +60,17 @@ impl PPMImage {
         }
 
         return img;
+    }
+
+    pub fn export_to_file(self, file_path: &str) -> Result<(), ()> {
+        let _file_path = file_path;
+        todo!();
+    }
+
+    // Reverse DWT
+    pub fn from_dwt_image(image: &DWTImage) -> PPMImage {
+        let _image = image;
+        todo!();
     }
 
     fn parse_next_normal_number_from_header(contents: &mut VecDeque<u8>) -> usize {
@@ -120,6 +132,77 @@ impl DWTImage {
         }
     }
 
+    pub fn hide_message(self, mess: DWTImage) -> PPMImage {
+        // blocking
+        let (ia, mut ih, mut iv, mut id, sa) = (
+            DWTImage::blocking_extract_one(self.ll, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(self.lh, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(self.hl, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(self.hh, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(mess.ll, mess.orig_width, mess.orig_height),
+        );
+        // matching
+        let index = DWTImage::matching(&sa, &ia);
+        // block differences computation
+        let mut bdc: Block<i32> = [RGBColor::new(0, 0, 0); 4];
+        for i in 0..4 {
+            bdc[i].red = sa[0][i].red - ia[index][i].red;
+            bdc[i].green = sa[0][i].green - ia[index][i].green;
+            bdc[i].blue = sa[0][i].blue - ia[index][i].blue;
+        }
+        // block replacement
+        DWTImage::block_replacement(&bdc, &mut ih, &mut iv, &mut id);
+
+        let watermarked_image = DWTImage::rearrange_blocks(&ia, &ih, &iv, &id);
+        return PPMImage::from_dwt_image(&watermarked_image);
+    }
+
+    fn rearrange_blocks(
+        ia: &Vec<Block<i32>>,
+        ih: &Vec<Block<i32>>,
+        iv: &Vec<Block<i32>>,
+        id: &Vec<Block<i32>>,
+    ) -> DWTImage {
+        todo!()
+    }
+
+    fn block_replacement(
+        bd: &Block<i32>,
+        ih: &mut Vec<Block<i32>>,
+        iv: &mut Vec<Block<i32>>,
+        id: &mut Vec<Block<i32>>,
+    ) {
+        let (ih_index, iv_index, id_index) = (
+            DWTImage::find_most_fit_block_index(&bd, &ih),
+            DWTImage::find_most_fit_block_index(&bd, &iv),
+            DWTImage::find_most_fit_block_index(&bd, &id),
+        );
+        let elements = vec![ih[ih_index], iv[iv_index], id[id_index]];
+
+        let mut result: Vec<(f64, usize)> = Vec::new();
+        result.push((DWTImage::root_mean_square_error(bd, &elements[0]), ih_index));
+        result.push((DWTImage::root_mean_square_error(bd, &elements[1]), iv_index));
+        result.push((DWTImage::root_mean_square_error(bd, &elements[2]), id_index));
+
+        quicksort::quicksort_by(&mut result, DWTImage::float_usize_tuple_compare);
+        for &index in &[ih_index, iv_index, id_index] {
+            match index {
+                x if x == ih_index => {
+                    ih[ih_index] = *bd;
+                }
+                x if x == iv_index => {
+                    iv[iv_index] = *bd;
+                }
+                x if x == id_index => {
+                    id[id_index] = *bd;
+                }
+                _ => {
+                    eprintln!("Unreachable, index = {}", index);
+                }
+            }
+        }
+    }
+
     pub fn from_ppm(img: &PPMImage) -> DWTImage {
         let (mut ll, mut lh, mut hl, mut hh) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (vec_low, vec_high) = DWTImage::horizontal_transform(img);
@@ -138,7 +221,6 @@ impl DWTImage {
                 hl.push(
                     vec_high[(y + 1) * (img.width / 2) + x].add(&vec_high[y * (img.width / 2) + x]),
                 );
-
                 lh.push(
                     vec_low[y * (img.width / 2) + x].sub(&vec_low[(y + 1) * (img.width / 2) + x]),
                 );
@@ -169,49 +251,49 @@ impl DWTImage {
         return (vec_low, vec_high);
     }
 
-    pub fn hide_message(self, mess: DWTImage) -> DWTImage {
-        // blocking
-        let (ia, ih, iv, id, sa) = (
-            DWTImage::blocking_extract_one(self.ll, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(self.lh, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(self.hl, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(self.hh, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(mess.ll, mess.orig_width, mess.orig_height),
-        );
-        // matching
-        let index = DWTImage::matching(&ia, &sa);
-
-        println!("{:?}", index);
-        todo!();
+    fn float_usize_tuple_compare(e1: &(f64, usize), e2: &(f64, usize)) -> Ordering {
+        if e1.0 < e2.0 {
+            return Ordering::Less;
+        } else if e1.0 > e2.0 {
+            return Ordering::Greater;
+        } else {
+            return Ordering::Equal;
+        }
     }
 
-    fn matching(ia: &Vec<[RGBColor<i32>; 4]>, sa: &Vec<[RGBColor<i32>; 4]>) -> (usize, usize) {
-        let mut result: Vec<(f64, usize, usize)> = Vec::new();
-
-        println!("{} {}", sa.len(), ia.len());
-        for sa_index in 0..sa.len() {
-            for ia_index in 0..ia.len() {
-                result.push((DWTImage::root_mean_square_error(&sa[sa_index], &ia[ia_index]), sa_index, ia_index));
-            }
+    fn find_most_fit_block_index(bdc: &Block<i32>, arr: &Vec<Block<i32>>) -> usize {
+        let mut result: Vec<(f64, usize)> = Vec::new();
+        for i in 0..arr.len() {
+            result.push((DWTImage::root_mean_square_error(&bdc, &arr[i]), i));
         }
 
-        quicksort::quicksort_by(
-            &mut result,
-            |e1: &(f64, usize, usize), e2: &(f64, usize, usize)| -> Ordering {
-                if e1.0 < e2.0 {
-                    return Ordering::Less;
-                } else if e1.0 > e2.0 {
-                    return Ordering::Greater;
-                } else {
-                    return Ordering::Equal;
-                }
-            },
-        );
-
-        return (result[0].1, result[0].2);
+        quicksort::quicksort_by(&mut result, DWTImage::float_usize_tuple_compare);
+        return result[0].1;
     }
 
-    fn root_mean_square_error(vec1: &[RGBColor<i32>; 4], vec2: &[RGBColor<i32>; 4]) -> f64 {
+    #[allow(dead_code)]
+    fn block_differences_computation(
+        sa: &Vec<Block<i32>>,
+        ia: &Vec<Block<i32>>,
+    ) -> Vec<Block<i32>> {
+        let mut result: Vec<Block<i32>> = Vec::new();
+        let mut temp_arr: Block<i32> = [RGBColor::new(0, 0, 0); 4];
+        for sa_index in 0..sa.len() {
+            for ia_index in 0..ia.len() {
+                for i in 0..4 {
+                    temp_arr[i] = RGBColor::new(
+                        sa[sa_index][i].red - ia[ia_index][i].red,
+                        sa[sa_index][i].green - ia[ia_index][i].green,
+                        sa[sa_index][i].blue - ia[ia_index][i].blue,
+                    );
+                }
+                result.push(temp_arr);
+            }
+        }
+        return result;
+    }
+
+    fn root_mean_square_error(vec1: &Block<i32>, vec2: &Block<i32>) -> f64 {
         let mut result_color: RGBColor<f64> = RGBColor::new(0.0, 0.0, 0.0);
 
         for i in 0..4 {
@@ -231,9 +313,9 @@ impl DWTImage {
         mat: Vec<RGBColor<i32>>,
         orig_width: usize,
         orig_height: usize,
-    ) -> Vec<[RGBColor<i32>; 4]> {
-        let mut result: Vec<[RGBColor<i32>; 4]> = Vec::new();
-        let mut temp_arr: [RGBColor<i32>; 4] = [RGBColor::new(0, 0, 0); 4];
+    ) -> Vec<Block<i32>> {
+        let mut result: Vec<Block<i32>> = Vec::new();
+        let mut temp_arr: Block<i32> = [RGBColor::new(0, 0, 0); 4];
 
         for y in (0..orig_height / 2 - 1).step_by(2) {
             for x in (0..orig_width / 2 - 1).step_by(2) {
@@ -246,6 +328,19 @@ impl DWTImage {
         }
 
         return result;
+    }
+
+    fn matching(sa: &Vec<Block<i32>>, ia: &Vec<Block<i32>>) -> usize {
+        let mut result: Vec<(f64, usize)> = Vec::new();
+        for ia_index in 0..ia.len() {
+            result.push((
+                DWTImage::root_mean_square_error(&sa[0], &ia[ia_index]),
+                ia_index,
+            ));
+        }
+
+        quicksort::quicksort_by(&mut result, DWTImage::float_usize_tuple_compare);
+        return result[0].1;
     }
 }
 
