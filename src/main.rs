@@ -12,5 +12,5 @@ fn main() {
     let message_image = DWTImage::from_ppm(&PPMImage::from_file(&secret_filepath));
 
     let watermarked_image = orginal_image.hide_message(message_image);
-    watermarked_image.export_to_file("./images/watermarked.ppm");
+    watermarked_image.export_to_file("./images/watermarked.ppm").unwrap();
 }

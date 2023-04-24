@@ -31,4 +31,15 @@ impl<T: Copy> RGBColor<T> {
             blue: self.blue - color.blue,
         };
     }
+
+    pub fn div_by(self, number: T) -> RGBColor<T>
+    where
+        T: std::ops::Div<Output = T>,
+    {
+        return RGBColor {
+            red: self.red / number,
+            green: self.green / number,
+            blue: self.blue / number,
+        };
+    }
 }

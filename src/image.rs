@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::{cmp::Ordering, fs, str};
+use std::{cmp::Ordering, fs, io::Write, str};
 
 use crate::color::RGBColor;
 
@@ -38,6 +38,7 @@ impl PPMImage {
         };
     }
 
+    // FIXME: This version currently will not parse comment
     pub fn from_file(file_path: &str) -> PPMImage {
         let mut img = PPMImage::new();
         let mut contents = VecDeque::from(fs::read(file_path).expect("Could not open file"));
@@ -62,15 +63,25 @@ impl PPMImage {
         return img;
     }
 
-    pub fn export_to_file(self, file_path: &str) -> Result<(), ()> {
-        let _file_path = file_path;
-        todo!();
-    }
+    pub fn export_to_file(self, file_path: &str) -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&file_path)?;
+        let mut buffer: Vec<u8> = Vec::new();
 
-    // Reverse DWT
-    pub fn from_dwt_image(image: &DWTImage) -> PPMImage {
-        let _image = image;
-        todo!();
+        writeln!(&mut file, "{}", self.img_type)?;
+        writeln!(&mut file, "{} {}", self.width, self.height)?;
+        writeln!(&mut file, "{}", self.max_val)?;
+
+        for value in self.data {
+            buffer.push(value.red as u8);
+            buffer.push(value.green as u8);
+            buffer.push(value.blue as u8);
+        }
+        file.write_all(&buffer)?;
+
+        Ok(())
     }
 
     fn parse_next_normal_number_from_header(contents: &mut VecDeque<u8>) -> usize {
@@ -132,14 +143,14 @@ impl DWTImage {
         }
     }
 
-    pub fn hide_message(self, mess: DWTImage) -> PPMImage {
+    pub fn hide_message(&self, mess: DWTImage) -> PPMImage {
         // blocking
         let (ia, mut ih, mut iv, mut id, sa) = (
-            DWTImage::blocking_extract_one(self.ll, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(self.lh, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(self.hl, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(self.hh, self.orig_width, self.orig_height),
-            DWTImage::blocking_extract_one(mess.ll, mess.orig_width, mess.orig_height),
+            DWTImage::blocking_extract_one(&self.ll, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(&self.lh, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(&self.hl, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(&self.hh, self.orig_width, self.orig_height),
+            DWTImage::blocking_extract_one(&mess.ll, mess.orig_width, mess.orig_height),
         );
         // matching
         let index = DWTImage::matching(&sa, &ia);
@@ -153,8 +164,39 @@ impl DWTImage {
         // block replacement
         DWTImage::block_replacement(&bdc, &mut ih, &mut iv, &mut id);
 
-        let watermarked_image = DWTImage::rearrange_blocks(&ia, &ih, &iv, &id);
-        return PPMImage::from_dwt_image(&watermarked_image);
+        let watermarked_image =
+            DWTImage::rearrange_blocks(&ia, &ih, &iv, &id, self.orig_width, self.orig_height);
+
+        return watermarked_image.inverse_dwt();
+    }
+
+    fn inverse_dwt(&self) -> PPMImage {
+        let mut result_image: PPMImage = PPMImage::new();
+        let (x_left, x_right, y_left, y_right) = self.inverse_vertical_transform();
+        let secret_image = DWTImage::inverse_horizontal_transform(x_left, x_right, y_left, y_right);
+        let mut block_count = 0;
+
+        result_image.img_type = String::from("P6");
+        result_image.width = self.orig_width;
+        result_image.height = self.orig_height;
+        result_image.max_val = 255;
+        result_image.data = vec![RGBColor::new(0, 0, 0); self.orig_width * self.orig_height];
+
+        for y in (0..self.orig_height).step_by(2) {
+            for x in (0..self.orig_width).step_by(2) {
+                result_image.data[(y + 0) * self.orig_width + (x + 0)] =
+                    secret_image[block_count][0];
+                result_image.data[(y + 0) * self.orig_width + (x + 1)] =
+                    secret_image[block_count][1];
+                result_image.data[(y + 1) * self.orig_width + (x + 0)] =
+                    secret_image[block_count][2];
+                result_image.data[(y + 1) * self.orig_width + (x + 1)] =
+                    secret_image[block_count][3];
+                block_count += 1;
+            }
+        }
+
+        return result_image;
     }
 
     fn rearrange_blocks(
@@ -162,8 +204,39 @@ impl DWTImage {
         ih: &Vec<Block<i32>>,
         iv: &Vec<Block<i32>>,
         id: &Vec<Block<i32>>,
+        width: usize,
+        height: usize,
     ) -> DWTImage {
-        todo!()
+        let (ll, lh, hl, hh) = (
+            DWTImage::rearrange_one_block(&ia, width, height),
+            DWTImage::rearrange_one_block(&ih, width, height),
+            DWTImage::rearrange_one_block(&iv, width, height),
+            DWTImage::rearrange_one_block(&id, width, height),
+        );
+
+        return DWTImage::new(ll, lh, hl, hh, width, height);
+    }
+
+    fn rearrange_one_block(
+        arr: &Vec<Block<i32>>,
+        width: usize,
+        height: usize,
+    ) -> Vec<RGBColor<i32>> {
+        let mut result: Vec<RGBColor<i32>> =
+            vec![RGBColor::new(0, 0, 0); (width / 2) * (height / 2)];
+        let mut block_count = 0;
+
+        for y in (0..height / 2).step_by(2) {
+            for x in (0..width / 2).step_by(2) {
+                result[(y + 0) * (width / 2) + (x + 0)] = arr[block_count][0];
+                result[(y + 0) * (width / 2) + (x + 1)] = arr[block_count][1];
+                result[(y + 1) * (width / 2) + (x + 0)] = arr[block_count][2];
+                result[(y + 1) * (width / 2) + (x + 1)] = arr[block_count][3];
+                block_count += 1;
+            }
+        }
+
+        return result;
     }
 
     fn block_replacement(
@@ -185,20 +258,18 @@ impl DWTImage {
         result.push((DWTImage::root_mean_square_error(bd, &elements[2]), id_index));
 
         quicksort::quicksort_by(&mut result, DWTImage::float_usize_tuple_compare);
-        for &index in &[ih_index, iv_index, id_index] {
-            match index {
-                x if x == ih_index => {
-                    ih[ih_index] = *bd;
-                }
-                x if x == iv_index => {
-                    iv[iv_index] = *bd;
-                }
-                x if x == id_index => {
-                    id[id_index] = *bd;
-                }
-                _ => {
-                    eprintln!("Unreachable, index = {}", index);
-                }
+        match result[0].1 {
+            x if x == ih_index => {
+                ih[ih_index] = *bd;
+            }
+            x if x == iv_index => {
+                iv[iv_index] = *bd;
+            }
+            x if x == id_index => {
+                id[id_index] = *bd;
+            }
+            _ => {
+                eprintln!("Unreachable, index = {}", result[0].1);
             }
         }
     }
@@ -310,15 +381,15 @@ impl DWTImage {
     }
 
     fn blocking_extract_one(
-        mat: Vec<RGBColor<i32>>,
+        mat: &Vec<RGBColor<i32>>,
         orig_width: usize,
         orig_height: usize,
     ) -> Vec<Block<i32>> {
         let mut result: Vec<Block<i32>> = Vec::new();
         let mut temp_arr: Block<i32> = [RGBColor::new(0, 0, 0); 4];
 
-        for y in (0..orig_height / 2 - 1).step_by(2) {
-            for x in (0..orig_width / 2 - 1).step_by(2) {
+        for y in (0..orig_height / 2).step_by(2) {
+            for x in (0..orig_width / 2).step_by(2) {
                 temp_arr[0] = mat[(y + 0) * (orig_width / 2) + (x + 0)];
                 temp_arr[1] = mat[(y + 0) * (orig_width / 2) + (x + 1)];
                 temp_arr[2] = mat[(y + 1) * (orig_width / 2) + (x + 0)];
@@ -338,9 +409,66 @@ impl DWTImage {
                 ia_index,
             ));
         }
-
         quicksort::quicksort_by(&mut result, DWTImage::float_usize_tuple_compare);
         return result[0].1;
+    }
+
+    fn inverse_horizontal_transform(
+        x_left: Vec<RGBColor<i32>>,
+        x_right: Vec<RGBColor<i32>>,
+        y_left: Vec<RGBColor<i32>>,
+        y_right: Vec<RGBColor<i32>>,
+    ) -> Vec<Block<i32>> {
+        let mut result: Vec<Block<i32>> = Vec::new();
+        let mut x: RGBColor<i32>;
+        let mut y: RGBColor<i32>;
+        let mut temp_block: Block<i32> = [RGBColor::new(0, 0, 0); 4];
+
+        for i in 0..x_left.len() {
+            x = (x_left[i].add(&x_right[i])).div_by(2);
+            y = x_left[i].sub(&x);
+            temp_block[0] = x;
+            temp_block[1] = y;
+            x = (y_left[i].add(&y_right[i])).div_by(2);
+            y = y_left[i].sub(&x);
+            temp_block[2] = x;
+            temp_block[3] = y;
+            result.push(temp_block);
+        }
+
+        return result;
+    }
+
+    fn inverse_vertical_transform(
+        &self,
+    ) -> (
+        Vec<RGBColor<i32>>,
+        Vec<RGBColor<i32>>,
+        Vec<RGBColor<i32>>,
+        Vec<RGBColor<i32>>,
+    ) {
+        let mut x_left: Vec<RGBColor<i32>> = Vec::new();
+        let mut x_right: Vec<RGBColor<i32>> = Vec::new();
+        let mut y_left: Vec<RGBColor<i32>> = Vec::new();
+        let mut y_right: Vec<RGBColor<i32>> = Vec::new();
+        let mut x: RGBColor<i32>;
+        let mut y: RGBColor<i32>;
+
+        for i in 0..self.ll.len() {
+            x = (self.ll[i].add(&self.lh[i])).div_by(2);
+            y = self.ll[i].sub(&x);
+
+            x_left.push(x);
+            y_left.push(y);
+
+            x = (self.hl[i].add(&self.hh[i])).div_by(2);
+            y = self.hl[i].sub(&x);
+
+            x_right.push(x);
+            y_right.push(y);
+        }
+
+        return (x_left, x_right, y_left, y_right);
     }
 }
 
