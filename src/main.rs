@@ -1,16 +1,20 @@
 mod color;
 mod image;
+mod stegano;
 
 extern crate quicksort;
-use crate::image::{DWTImage, PPMImage};
+use crate::stegano::DWTImage;
 
 fn main() {
-    let orginal_filepath = String::from("./images/test.ppm");
-    let secret_filepath = String::from("./images/secret.ppm");
-
-    let orginal_image = DWTImage::from_ppm(&PPMImage::from_file(&orginal_filepath));
-    let message_image = DWTImage::from_ppm(&PPMImage::from_file(&secret_filepath));
-
-    let watermarked_image = orginal_image.hide_message(message_image);
-    watermarked_image.export_to_file("./images/watermarked.ppm").unwrap();
+    let (key1, index_arr, width, height) =
+        DWTImage::hide_image("./images/dog.ppm", "./images/banana.ppm").unwrap();
+    DWTImage::extract_message_from_image(
+        "./images/watermarked.ppm",
+        "./images/extracted_img.ppm",
+        key1,
+        index_arr,
+        width,
+        height,
+    )
+    .unwrap();
 }
